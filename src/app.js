@@ -113,7 +113,6 @@ app.post('/new-task', (req, res) => {
 
               getRows()
                 .then((data) => {
-                  console.log(data)
                   if (data.total > 0) {
                     const row = data.data.find(
                       (row) =>
