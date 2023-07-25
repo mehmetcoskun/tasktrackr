@@ -1,13 +1,13 @@
-import express from 'express';
-import cron from 'node-cron';
-import bodyParser from 'body-parser';
-import { Configuration, OpenAIApi } from 'openai';
-import { getRows, createRow, updateRow, sendText } from './services/index.js';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegPath from '@ffmpeg-installer/ffmpeg';
-import fs from 'node:fs';
-import https from 'node:https';
-import 'dotenv/config';
+import express from "express";
+import cron from "node-cron";
+import bodyParser from "body-parser";
+import { Configuration, OpenAIApi } from "openai";
+import { getRows, createRow, updateRow, sendText } from "./services/index.js";
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegPath from "@ffmpeg-installer/ffmpeg";
+import fs from "node:fs";
+import https from "node:https";
+import "dotenv/config";
 
 const app = express();
 app.use(bodyParser.json());
@@ -16,6 +16,7 @@ ffmpeg.setFfmpegPath(ffmpegPath.path);
 
 const {
   WHATSAPP_API_URL,
+  WHATSAPP_CHAT_ID,
   WHATSAPP_TEXT,
   OPENAI_API_KEY,
   SYSTEM_PROMPT,
@@ -27,59 +28,66 @@ const configuration = new Configuration({
 });
 const openai = new OpenAIApi(configuration);
 
-app.post('/new-task', (req, res) => {
+app.post("/new-task", (req, res) => {
   const { payload } = req.body;
-  console.log('[SISTEM] > Yeni görev isteği alındı.');
+  if (payload.from !== WHATSAPP_CHAT_ID) {
+    console.log(
+      "[SISTEM] > Yeni görev isteği alındı ancak farklı bir kişiden geldi."
+    );
+    return res.status(200).json({ status: "fail" });
+  }
 
-  if (!fs.existsSync('./audios')) {
-    fs.mkdirSync('./audios');
-    console.log('[SISTEM] > audios klasörü oluşturuldu.');
+  console.log("[SISTEM] > Yeni görev isteği alındı.");
+
+  if (!fs.existsSync("./audios")) {
+    fs.mkdirSync("./audios");
+    console.log("[SISTEM] > audios klasörü oluşturuldu.");
   }
 
   if (payload.hasMedia) {
     const mediaUrl = WHATSAPP_API_URL + payload.mediaUrl;
-    console.log('[SISTEM] > Medya dosyası indiriliyor.');
+    console.log("[SISTEM] > Medya dosyası indiriliyor.");
 
     https.get(mediaUrl, (response) => {
-      const fileStream = fs.createWriteStream('./audios/audio.oga');
+      const fileStream = fs.createWriteStream("./audios/audio.oga");
       response.pipe(fileStream);
 
-      fileStream.on('finish', () => {
-        console.log('[SISTEM] > Medya dosyası indirildi.');
+      fileStream.on("finish", () => {
+        console.log("[SISTEM] > Medya dosyası indirildi.");
 
-        ffmpeg(fs.createReadStream('./audios/audio.oga'))
-          .toFormat('mp3')
-          .on('error', (err) => {
+        ffmpeg(fs.createReadStream("./audios/audio.oga"))
+          .toFormat("mp3")
+          .on("error", (err) => {
             console.error(
-              '[SISTEM] > ffmpeg ile ses dönüştürülürken hata oluştu:',
+              "[SISTEM] > ffmpeg ile ses dönüştürülürken hata oluştu:",
               err
             );
           })
-          .on('progress', () => {
-            console.log('[SISTEM] > ffmpeg dönüşümü devam ediyor');
+          .on("progress", () => {
+            console.log("[SISTEM] > ffmpeg dönüşümü devam ediyor");
           })
-          .on('end', async () => {
-            console.log('[SISTEM] > ffmpeg dönüşümü tamamlandı.');
+          .on("end", async () => {
+            console.log("[SISTEM] > ffmpeg dönüşümü tamamlandı.");
 
             try {
               const resp = await openai.createTranscription(
-                fs.createReadStream('./audios/audio.mp3'),
-                'whisper-1'
+                fs.createReadStream("./audios/audio.mp3"),
+                "whisper-1"
               );
               console.log(
-                '[SISTEM] > Ses transkripti alındı: ',
+                "[SISTEM] > Ses transkripti alındı: ",
                 resp.data.text
               );
 
               const completion = await openai.createChatCompletion({
-                model: 'gpt-3.5-turbo',
+                model: "gpt-3.5-turbo",
                 messages: [
                   {
-                    role: 'system',
-                    content: SYSTEM_PROMPT.replace(/\\n/g, '\n'),
+                    role: "system",
+                    content: SYSTEM_PROMPT.replace(/\\n/g, "\n"),
                   },
                   {
-                    role: 'user',
+                    role: "user",
                     content: resp.data.text,
                   },
                 ],
@@ -88,25 +96,25 @@ app.post('/new-task', (req, res) => {
               let completionMessage =
                 completion.data.choices[0].message.content;
               console.log(
-                '[SISTEM] > Transkript analiz edildi: ',
+                "[SISTEM] > Transkript analiz edildi: ",
                 completionMessage
               );
 
               let isJsonValid = /^[\],:{}\s]*$/.test(
                 completionMessage
-                  .replace(/\\["\\\/bfnrtu]/g, '@')
+                  .replace(/\\["\\\/bfnrtu]/g, "@")
                   .replace(
                     /"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g,
-                    ']'
+                    "]"
                   )
-                  .replace(/(?:^|:|,)(?:\s*\[)+/g, '')
+                  .replace(/(?:^|:|,)(?:\s*\[)+/g, "")
               );
 
               if (!isJsonValid) {
                 console.error(
-                  '[SISTEM] > JSON parse edilemedi, lütfen tekrar deneyin.'
+                  "[SISTEM] > JSON parse edilemedi, lütfen tekrar deneyin."
                 );
-                sendText('JSON parse edilemedi, lütfen tekrar deneyin.');
+                sendText("JSON parse edilemedi, lütfen tekrar deneyin.");
               }
 
               const json = JSON.parse(completionMessage);
@@ -117,10 +125,10 @@ app.post('/new-task', (req, res) => {
                     const row = data.data.find(
                       (row) =>
                         row.TARIH ===
-                        new Date().toLocaleDateString('tr-TR', {
-                          day: 'numeric',
-                          month: 'numeric',
-                          year: 'numeric',
+                        new Date().toLocaleDateString("tr-TR", {
+                          day: "numeric",
+                          month: "numeric",
+                          year: "numeric",
                         })
                     );
 
@@ -129,79 +137,79 @@ app.post('/new-task', (req, res) => {
 
                       updateRow({
                         row_id,
-                        TARIH: new Date().toLocaleDateString('tr-TR', {
-                          day: 'numeric',
-                          month: 'numeric',
-                          year: 'numeric',
+                        TARIH: new Date().toLocaleDateString("tr-TR", {
+                          day: "numeric",
+                          month: "numeric",
+                          year: "numeric",
                         }),
                         SAAT: json.totalHours,
                         DURUM: json.tasks
                           .map((task) => {
                             return `${task.name} ${task.description} (${task.hours} saat)`;
                           })
-                          .join('\n'),
+                          .join("\n"),
                       });
                     } else {
                       createRow([
                         [
-                          new Date().toLocaleDateString('tr-TR', {
-                            day: 'numeric',
-                            month: 'numeric',
-                            year: 'numeric',
+                          new Date().toLocaleDateString("tr-TR", {
+                            day: "numeric",
+                            month: "numeric",
+                            year: "numeric",
                           }),
                           json.totalHours,
                           json.tasks
                             .map((task) => {
                               return `${task.name} ${task.description} (${task.hours} saat)`;
                             })
-                            .join('\n'),
+                            .join("\n"),
                         ],
                       ]);
                     }
                   } else {
                     createRow([
                       [
-                        new Date().toLocaleDateString('tr-TR', {
-                          day: 'numeric',
-                          month: 'numeric',
-                          year: 'numeric',
+                        new Date().toLocaleDateString("tr-TR", {
+                          day: "numeric",
+                          month: "numeric",
+                          year: "numeric",
                         }),
                         json.totalHours,
                         json.tasks
                           .map((task) => {
                             return `${task.name} ${task.description} (${task.hours} saat)`;
                           })
-                          .join('\n'),
+                          .join("\n"),
                       ],
                     ]);
                   }
                   console.log(
-                    '[SISTEM] > Excel ekleme/güncellem işlemi tamamlandı.'
+                    "[SISTEM] > Excel ekleme/güncellem işlemi tamamlandı."
                   );
                 })
                 .catch((error) => {
-                  console.error('[SISTEM] > API hata:', error.message);
+                  console.error("[SISTEM] > API hata:", error.message);
                 });
             } catch (error) {
-              console.error('[SISTEM] > API hata:', error.message);
+              console.error("[SISTEM] > API hata:", error.message);
             }
           })
-          .saveToFile('./audios/audio.mp3');
+          .saveToFile("./audios/audio.mp3");
       });
     });
   }
 
-  return res.status(200).json({ status: 'ok' });
+  return res.status(200).json({ status: "ok" });
 });
 
 cron.schedule(
   CRON_SCHEDULE,
   () => {
     sendText(WHATSAPP_TEXT);
-    console.log('[SISTEM] > Cron job çalıştırıldı.');
+    console.log("[SISTEM] > Cron job çalıştırıldı.");
   },
   {
-    timezone: 'Europe/Istanbul',
+    timezone: "Europe/Istanbul",
   }
 );
 
